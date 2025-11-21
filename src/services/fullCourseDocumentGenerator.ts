@@ -287,29 +287,56 @@ export class FullCourseDocumentGenerator {
   /**
    * Converts day data to LessonData format for document generation.
    *
+   * This is a CRITICAL function that bridges the "full course" format (multiple days)
+   * with the "single day" format used by the document generator. It performs:
+   *
+   * 1. **Session Grouping**: Groups all Zoom sessions by participant (handling aliases)
+   * 2. **Period Splitting**: Splits sessions into morning (<13:00) and afternoon (>=13:00)
+   * 3. **Presence Calculation**: Applies the 45-minute rule to determine attendance
+   * 4. **Absence Handling**: Adds participants who were absent this day (from master list)
+   * 5. **Ordering**: Sorts participants by masterOrder for consistent placement in template
+   *
    * @private
-   * @param day - Day data to convert
-   * @param parsedData - Full course data (for participant lookup)
-   * @returns Lesson data in format expected by document generator
+   * @param day - Single day's data from full course
+   * @param parsedData - Full course data (needed for participant lookup and alias resolution)
+   * @returns Lesson data in format expected by single-day document generator
+   *
+   * @remarks
+   * This function ensures that even if a participant was present on other days but
+   * absent today, they still appear in the document with empty attendance times.
+   * This maintains consistent participant ordering across all daily documents.
+   *
+   * @example
+   * ```ts
+   * // Input: day with 3 participants having multiple Zoom sessions
+   * // Output: LessonData with participants marked present/absent, with connection times
+   * const lessonData = this.convertDayToLessonData(day, parsedData);
+   * // lessonData.participants includes both present and absent participants
+   * // lessonData.participants[0].allConnections.morning = [{ joinTime, leaveTime }, ...]
+   * ```
    */
   private convertDayToLessonData(
     day: FullCourseDayData,
     parsedData: ParsedFullCourseData
   ): LessonData {
-    // Group sessions by participant
+    // STEP 1: Group all sessions by participant name
+    // This consolidates multiple Zoom connections per participant and resolves aliases
     const participantSessions = this.groupSessionsByParticipant(day, parsedData);
 
-    // Split into morning and afternoon
+    // STEP 2: Split sessions into morning (<13:00) and afternoon (>=13:00) periods
+    // This is required by the 45-minute presence rule which applies separately to each period
     const { morningParticipants, afternoonParticipants } =
       this.splitSessionsByPeriod(participantSessions);
 
-    // Process participants using existing logic
+    // STEP 3: Apply presence calculation using the existing single-day logic
+    // This calculates connection gaps and determines PRESENT vs ABSENT status
     const { participants, organizer } = processParticipants(
       morningParticipants,
       afternoonParticipants
     );
 
-    // Determine lesson type and calculate hours
+    // STEP 4: Determine lesson type (morning, afternoon, both, or fast)
+    // This affects which hours are included in the final schedule
     const lessonType = this.determineLessonType(
       morningParticipants.length,
       afternoonParticipants.length
@@ -320,20 +347,25 @@ export class FullCourseDocumentGenerator {
       lessonType
     );
 
+    // STEP 5: Create records for participants who were ABSENT this day
+    // These participants are in the master list but didn't attend this specific day
     const participantNamesPresent = new Set(participants.map(p => p.name));
     const fixedAbsents = parsedData.allParticipants
-      .filter(p => !p.isOrganizer)
-      .filter(p => !participantNamesPresent.has(p.primaryName))
+      .filter(p => !p.isOrganizer) // Exclude organizer
+      .filter(p => !participantNamesPresent.has(p.primaryName)) // Only those absent today
       .map<ProcessedParticipant>(p => ({
         name: p.primaryName,
         email: p.email,
-        totalAbsenceMinutes: 999,
+        totalAbsenceMinutes: 999, // High value to ensure marked as absent
         isPresent: false,
         isAbsent: true,
-        allConnections: { morning: [], afternoon: [] },
-        sessions: { morning: [], afternoon: [] },
+        allConnections: { morning: [], afternoon: [] }, // No connections
+        sessions: { morning: [], afternoon: [] }, // No sessions
       }));
 
+    // STEP 6: Merge present and absent participants, sort by masterOrder
+    // This ensures consistent participant ordering across all daily documents
+    // Limit to MAX_PARTICIPANTS_IN_TEMPLATE (5) for template compatibility
     const mergedParticipants = this.sortByMasterOrder([...participants, ...fixedAbsents], parsedData)
       .slice(0, MAX_PARTICIPANTS_IN_TEMPLATE);
 
@@ -353,10 +385,35 @@ export class FullCourseDocumentGenerator {
   /**
    * Groups sessions by participant, handling aliases.
    *
+   * This function is crucial for handling the case where a participant appears
+   * under different names in Zoom (e.g., "giorgio s." vs "Giorgio santambrogio").
+   * It uses the alias resolution from the parsing phase to consolidate all sessions
+   * under the participant's primary name.
+   *
    * @private
-   * @param day - Day data
-   * @param parsedData - Full course data (for alias resolution)
-   * @returns Map of participant name to sessions
+   * @param day - Day data with raw Zoom sessions
+   * @param parsedData - Full course data (contains alias mappings and participant info)
+   * @returns Map of primary participant name -> array of all their sessions
+   *
+   * @remarks
+   * Each session in the returned map includes:
+   * - Normalized participant name (primaryName)
+   * - Email (prefers session email, falls back to participant email)
+   * - Join/leave times for the specific connection
+   * - Organizer status (for special handling)
+   *
+   * @example
+   * ```ts
+   * // Input: day.sessions with:
+   * //   - { participantName: "giorgio s.", joinTime: 9:00, leaveTime: 10:00 }
+   * //   - { participantName: "Giorgio santambrogio", joinTime: 14:00, leaveTime: 15:00 }
+   * // Output: Map {
+   * //   "Giorgio santambrogio" => [
+   * //     { name: "Giorgio santambrogio", joinTime: 9:00, ... },
+   * //     { name: "Giorgio santambrogio", joinTime: 14:00, ... }
+   * //   ]
+   * // }
+   * ```
    */
   private groupSessionsByParticipant(
     day: FullCourseDayData,
@@ -365,22 +422,27 @@ export class FullCourseDocumentGenerator {
     const participantSessions = new Map<string, any[]>();
 
     for (const session of day.sessions) {
+      // Resolve alias to primary participant name
       const participant = this.findParticipantByName(
         session.participantName,
         parsedData.allParticipants
       );
 
+      // Skip if participant not found (shouldn't happen)
       if (!participant) continue;
 
+      // Use primary name for grouping (consolidates aliases)
       const participantName = participant.primaryName;
 
+      // Initialize array for this participant if not exists
       if (!participantSessions.has(participantName)) {
         participantSessions.set(participantName, []);
       }
 
+      // Add session to participant's array
       participantSessions.get(participantName)!.push({
         name: participantName,
-        email: session.email || participant.email,
+        email: session.email || participant.email, // Prefer session email
         joinTime: session.joinTime,
         leaveTime: session.leaveTime,
         duration: session.duration,

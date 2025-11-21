@@ -397,10 +397,22 @@ export class AliasManagementService {
   /**
    * Calculates name similarity using multiple heuristics.
    *
-   * Combines three similarity metrics with weighted average:
-   * - 40% Containment score (substring matching)
-   * - 30% Levenshtein distance (edit distance)
-   * - 30% Token similarity (word-based Jaccard)
+   * This is the CORE ALGORITHM for alias detection. It uses a weighted combination
+   * of three complementary similarity metrics, each targeting different name variations:
+   *
+   * **Metric Weights:**
+   * - 40% Containment score: Detects abbreviations and shortened names
+   * - 30% Levenshtein distance: Detects typos and character-level differences
+   * - 30% Token similarity (Jaccard): Detects word reordering and middle name variations
+   *
+   * **Additional Boost:**
+   * - +20% max for abbreviations (e.g., "g" matches "giorgio", "s" matches "santambrogio")
+   *
+   * **Auto-merge Threshold:**
+   * - ≥0.80 (80%): High confidence, automatically merged
+   * - 0.65-0.79: Medium confidence, suggested for manual review
+   * - 0.55-0.64: Low confidence, shown but not suggested
+   * - <0.55: Ignored, too different
    *
    * @private
    * @param name1 - First name to compare
@@ -409,52 +421,110 @@ export class AliasManagementService {
    *
    * @example
    * ```ts
-   * const similarity = this.calculateNameSimilarity("giorgio s.", "Giorgio santambrogio");
-   * // Returns: ~0.9 (high similarity due to containment and token match)
+   * // Abbreviation case
+   * this.calculateNameSimilarity("giorgio s.", "Giorgio santambrogio");
+   * // Returns: ~0.9 (containment: 0.7, token: 1.0, levenshtein: 0.5, abbr boost: +0.1)
+   *
+   * // Typo case
+   * this.calculateNameSimilarity("Georgio", "Giorgio");
+   * // Returns: ~0.85 (levenshtein: high, others: moderate)
+   *
+   * // Different names
+   * this.calculateNameSimilarity("Mario Rossi", "Luigi Verdi");
+   * // Returns: ~0.1 (all metrics low)
    * ```
    */
   private calculateNameSimilarity(name1: string, name2: string): number {
+    // Normalize names: lowercase, remove accents, remove special characters
     const normalized1 = this.normalizeName(name1);
     const normalized2 = this.normalizeName(name2);
 
-    // Exact match check
+    // Fast path: exact match after normalization
     if (normalized1 === normalized2) {
       return 1.0;
     }
 
-    // Calculate individual similarity metrics
+    // METRIC 1: Containment Score (40% weight)
+    // Detects if one name is contained in the other
+    // Example: "giorgio s" is contained in "giorgio santambrogio"
     const containmentScore = this.calculateContainmentScore(normalized1, normalized2);
+
+    // METRIC 2: Levenshtein Similarity (30% weight)
+    // Measures edit distance (insertions, deletions, substitutions)
+    // Example: "georgio" vs "giorgio" has distance of 1
     const levenshteinScore = this.calculateLevenshteinSimilarity(normalized1, normalized2);
+
+    // METRIC 3: Token Similarity / Jaccard Index (30% weight)
+    // Measures word overlap regardless of order
+    // Example: "john paul smith" vs "smith john" = 2/3 = 0.67
     const tokenScore = this.calculateTokenSimilarity(normalized1, normalized2);
 
-    // Weighted average
+    // Calculate weighted average of the three metrics
     let similarity =
-      containmentScore * CONTAINMENT_WEIGHT +
-      levenshteinScore * LEVENSHTEIN_WEIGHT +
-      tokenScore * TOKEN_WEIGHT;
+      containmentScore * CONTAINMENT_WEIGHT +  // 40%
+      levenshteinScore * LEVENSHTEIN_WEIGHT +  // 30%
+      tokenScore * TOKEN_WEIGHT;               // 30%
 
+    // BONUS: Abbreviation boost (up to +0.20)
+    // Detects single-letter matches (e.g., "s" matches "santambrogio")
     const abbrBoost = this.calculateAbbreviationBoost(normalized1, normalized2);
     similarity = Math.min(1, similarity + abbrBoost);
 
     return similarity;
   }
 
+  /**
+   * Calculates bonus score for abbreviation matches.
+   *
+   * This function provides additional similarity when single letters or short
+   * tokens match the start of longer words. Common in Italian names where
+   * people use initials for their last name.
+   *
+   * **Boost Rules:**
+   * - Single letter matches word start: +0.10 per match
+   * - Two letters ending in "s" (e.g., "gs" → "g"): +0.08 per match
+   * - Maximum total boost: 0.20 (ABBREVIATION_BOOST_MAX)
+   *
+   * @private
+   * @param n1 - First normalized name
+   * @param n2 - Second normalized name
+   * @returns Boost score (0 to 0.20)
+   *
+   * @example
+   * ```ts
+   * // Single letter abbreviation
+   * calculateAbbreviationBoost("giorgio s", "giorgio santambrogio")
+   * // "s" matches "santambrogio" → boost: 0.10
+   *
+   * // Multiple abbreviations
+   * calculateAbbreviationBoost("g s", "giorgio santambrogio")
+   * // "g" matches "giorgio" (+0.10) + "s" matches "santambrogio" (+0.10)
+   * // Total: 0.20 (capped at ABBREVIATION_BOOST_MAX)
+   * ```
+   */
   private calculateAbbreviationBoost(n1: string, n2: string): number {
     const t1 = this.extractTokens(n1);
     const t2 = this.extractTokens(n2);
 
     let boost = 0;
+
+    // Check if tokens in name1 are abbreviations of tokens in name2
     for (const tok1 of t1) {
       if (tok1.length === 1) {
+        // Single letter: check if it starts any token in name2
+        // Example: "s" matches "santambrogio"
         const match = Array.from(t2).some(tok2 => tok2.startsWith(tok1));
         if (match) boost += 0.10;
       } else if (tok1.length === 2 && tok1.endsWith('s')) {
+        // Two letters ending in 's': use first letter only
+        // Example: "gs" → "g" matches "giorgio"
         const base = tok1[0];
         const match = Array.from(t2).some(tok2 => tok2.startsWith(base));
         if (match) boost += 0.08;
       }
     }
 
+    // Check if tokens in name2 are abbreviations of tokens in name1 (reverse check)
     for (const tok2 of t2) {
       if (tok2.length === 1) {
         const match = Array.from(t1).some(tok1 => tok1.startsWith(tok2));
@@ -466,6 +536,7 @@ export class AliasManagementService {
       }
     }
 
+    // Cap boost at maximum allowed value
     return Math.min(ABBREVIATION_BOOST_MAX, boost);
   }
 

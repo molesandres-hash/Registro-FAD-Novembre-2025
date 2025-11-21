@@ -560,21 +560,30 @@ export class FullCourseParsingService {
     if (!dateTimeStr) return new Date();
 
     try {
+      // Clean quotes and trim whitespace
       const cleaned = dateTimeStr.replace(/"/g, '').trim();
+
+      // Split into date, time, and AM/PM parts
+      // Example: "19/09/2025 01:58:39 PM" -> ["19/09/2025", "01:58:39", "PM"]
       const parts = cleaned.split(/\s+/);
 
       const datePart = parts[0];
       const timePart = parts[1] || '00:00:00';
       const ampm = (parts[2] || '').toUpperCase();
 
+      // Parse date components (handles both DD/MM/YYYY and MM/DD/YYYY)
       const { day, month, year } = this.parseDatePart(datePart);
+
+      // Convert 12-hour time to 24-hour format
       const hour24 = this.parseTimePart(timePart, ampm);
       const { minute, second } = this.parseMinutesAndSeconds(timePart);
 
+      // Validate parsed components before creating Date object
       if (Number.isNaN(day) || Number.isNaN(month) || Number.isNaN(year)) {
         throw new Error('Invalid date components');
       }
 
+      // JavaScript Date months are 0-indexed, so subtract 1 from month
       return new Date(year, month - 1, day, hour24, minute, second);
     } catch (error) {
       console.error('Error parsing date:', dateTimeStr, error);
@@ -585,11 +594,26 @@ export class FullCourseParsingService {
   /**
    * Parses the date portion of a Zoom datetime string.
    *
-   * Auto-detects DD/MM/YYYY vs MM/DD/YYYY format.
+   * Auto-detects DD/MM/YYYY vs MM/DD/YYYY format using smart heuristics:
+   * - If first part > 12 and second <= 12: DD/MM/YYYY (day is > 12, so must be day)
+   * - If second part > 12 and first <= 12: MM/DD/YYYY (month is > 12, so must be day)
+   * - If both <= 12: Assumes DD/MM/YYYY (Italian format default)
    *
    * @private
-   * @param datePart - Date string (e.g., "19/09/2025")
+   * @param datePart - Date string (e.g., "19/09/2025" or "09/19/2025")
    * @returns Object with day, month, and year
+   *
+   * @example
+   * ```ts
+   * // Italian format (DD/MM/YYYY)
+   * this.parseDatePart("19/09/2025") // Returns: { day: 19, month: 9, year: 2025 }
+   *
+   * // US format (MM/DD/YYYY) - auto-detected and swapped
+   * this.parseDatePart("09/19/2025") // Returns: { day: 19, month: 9, year: 2025 }
+   *
+   * // Ambiguous case (both <= 12) - assumes Italian format
+   * this.parseDatePart("05/10/2025") // Returns: { day: 5, month: 10, year: 2025 }
+   * ```
    */
   private parseDatePart(datePart: string): { day: number; month: number; year: number } {
     const [p1, p2, p3] = datePart.split('/').map(v => parseInt(v, 10));
@@ -597,16 +621,17 @@ export class FullCourseParsingService {
     let month = p2;
     const year = p3;
 
-    // Auto-detect DD/MM/YYYY vs MM/DD/YYYY
+    // Auto-detect DD/MM/YYYY vs MM/DD/YYYY format
+    // Logic: Months cannot be > 12, so we can determine format by checking values
     if (day > 12 && month <= 12) {
-      // Already DD/MM format
+      // First part is > 12, must be day -> Already DD/MM format, no swap needed
     } else if (month > 12 && day <= 12) {
-      // Was MM/DD format -> swap
+      // Second part is > 12, must be day -> Was MM/DD format, swap needed
       const tmp = day;
       day = month;
       month = tmp;
     }
-    // If both <= 12, assume DD/MM (Italian format)
+    // If both values are <= 12 (ambiguous), assume DD/MM (Italian format default)
 
     return { day, month, year };
   }
