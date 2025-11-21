@@ -147,10 +147,19 @@ export class AliasManagementService {
         continue;
       }
 
-      const similarity = this.calculateNameSimilarity(
+      let similarity = this.calculateNameSimilarity(
         participant.primaryName,
         other.primaryName
       );
+
+      // Boost similarity if emails match (and are not empty)
+      if (
+        participant.email &&
+        other.email &&
+        participant.email.trim().toLowerCase() === other.email.trim().toLowerCase()
+      ) {
+        similarity = Math.max(similarity, 0.95);
+      }
 
       if (similarity >= LOW_CONFIDENCE_THRESHOLD) {
         similarParticipants.push({ participant: other, similarity });

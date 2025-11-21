@@ -73,12 +73,8 @@ export const FullCourseApp: React.FC<FullCourseAppProps> = ({ templateFile, onBa
 
   const handleCSVParsed = (data: ParsedFullCourseData) => {
     setParsedCSVData(data);
-    // Go to alias management if there are suggestions, otherwise skip to participant editor
-    if (data.aliasSuggestions.length > 0) {
-      setCurrentStep('alias-management');
-    } else {
-      setCurrentStep('participant-editor');
-    }
+    // Skip alias management and go directly to participant editor
+    setCurrentStep('participant-editor');
   };
 
   const handleAliasManagementComplete = (updatedData: ParsedFullCourseData) => {
@@ -96,12 +92,8 @@ export const FullCourseApp: React.FC<FullCourseAppProps> = ({ templateFile, onBa
   };
 
   const handleParticipantEditorBack = () => {
-    // Go back to alias management if there were suggestions, otherwise to CSV upload
-    if (parsedCSVData && parsedCSVData.aliasSuggestions.length > 0) {
-      setCurrentStep('alias-management');
-    } else {
-      setCurrentStep('csv-upload');
-    }
+    // Go back to CSV upload
+    setCurrentStep('csv-upload');
   };
 
   const handleDocumentGenerationComplete = () => {
@@ -133,7 +125,7 @@ export const FullCourseApp: React.FC<FullCourseAppProps> = ({ templateFile, onBa
     const email = absentEmail.trim();
     if (!name) return;
     const newParticipant = {
-      id: `manual_${name.toLowerCase().replace(/\s+/g,'_')}_${Date.now()}`,
+      id: `manual_${name.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}`,
       primaryName: name,
       aliases: [name],
       email,
@@ -170,7 +162,8 @@ export const FullCourseApp: React.FC<FullCourseAppProps> = ({ templateFile, onBa
         {parsedCSVData && (
           <div className="actions-bar">
             {currentStep !== 'participant-editor' && (
-              <button className="btn btn-secondary" onClick={openAliasManager}>Gestisci Alias</button>
+              // Alias management is now integrated in participant editor
+              null
             )}
             <button className="btn btn-primary" onClick={openAddAbsentModal}>Aggiungi Assente Fisso</button>
           </div>

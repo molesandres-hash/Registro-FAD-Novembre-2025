@@ -65,7 +65,15 @@ const SortableParticipantItem: React.FC<SortableParticipantItemProps> = ({
         <FiMove />
       </div>
       <span className="participant-number">#{index + 1}</span>
-      <span className="participant-name">{participant.primaryName}</span>
+      <div className="participant-details">
+        <span className="participant-name">{participant.primaryName}</span>
+        {participant.aliases.length > 1 && (
+          <div className="merged-badge" title={`Include: ${participant.aliases.join(', ')}`}>
+            <FiUsers size={12} />
+            <span>{participant.aliases.length} varianti</span>
+          </div>
+        )}
+      </div>
       <div className="participant-info">
         <span className="participant-days">
           {participant.daysPresent.length} {participant.daysPresent.length === 1 ? 'giorno' : 'giorni'}
@@ -117,6 +125,15 @@ export const FullCourseParticipantEditor: React.FC<FullCourseParticipantEditorPr
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
+
+  // Auto-detect aliases on mount
+  React.useEffect(() => {
+    const suggestions = aliasManagementService.detectAliases(participants);
+    if (suggestions.length > 0) {
+      setAliasSuggestions(suggestions);
+      setShowAliasPanel(true);
+    }
+  }, []); // Run once on mount
 
   const [newAbsentName, setNewAbsentName] = useState('');
   const [newAbsentEmail, setNewAbsentEmail] = useState('');
@@ -195,7 +212,7 @@ export const FullCourseParticipantEditor: React.FC<FullCourseParticipantEditorPr
     const email = newAbsentEmail.trim();
     if (!name) return;
     const newEntry: FullCourseParticipantInfo = {
-      id: `manual_${name.toLowerCase().replace(/\s+/g,'_')}_${Date.now()}`,
+      id: `manual_${name.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}`,
       primaryName: name,
       aliases: [name],
       email,
@@ -233,7 +250,13 @@ export const FullCourseParticipantEditor: React.FC<FullCourseParticipantEditorPr
   const applySelectedAliasMerges = () => {
     const selected = aliasSuggestions.filter((_, idx) => selectedAliasIndices.has(idx));
     if (selected.length === 0 && customSuggestions.length === 0) return;
-    const { mergedParticipants } = aliasManagementService.applyAliasMappings(participants, [...selected, ...customSuggestions]);
+
+    // We use forceMergeAll: true because the user explicitly selected these merges
+    const { mergedParticipants } = aliasManagementService.applyAliasMappings(
+      participants,
+      [...selected, ...customSuggestions],
+      { forceMergeAll: true }
+    );
     const sorted = [...mergedParticipants].sort((a, b) => (a.masterOrder || 0) - (b.masterOrder || 0));
     setParticipants(sorted);
     const newOrganizerIndex = sorted.findIndex(p => p.isOrganizer);
@@ -258,7 +281,7 @@ export const FullCourseParticipantEditor: React.FC<FullCourseParticipantEditorPr
     setSelectedAliasIndices(new Set());
   };
 
-  
+
 
   const toggleMergeMode = () => {
     setMergeMode(prev => !prev);
@@ -303,7 +326,12 @@ export const FullCourseParticipantEditor: React.FC<FullCourseParticipantEditorPr
       autoMerged: false,
       confidence: 1,
     };
-    const { mergedParticipants } = aliasManagementService.applyAliasMappings(participants, [suggestion]);
+    // We use forceMergeAll: true because this is a manual merge
+    const { mergedParticipants } = aliasManagementService.applyAliasMappings(
+      participants,
+      [suggestion],
+      { forceMergeAll: true }
+    );
     const sorted = [...mergedParticipants].sort((a, b) => (a.masterOrder || 0) - (b.masterOrder || 0));
     setParticipants(sorted);
     const newOrganizerIndex = sorted.findIndex(p => p.isOrganizer);
@@ -414,7 +442,7 @@ export const FullCourseParticipantEditor: React.FC<FullCourseParticipantEditorPr
                 ))}
               </div>
             )}
-            
+
           </div>
         )}
         <div className="add-absent-fixed">
@@ -443,19 +471,19 @@ export const FullCourseParticipantEditor: React.FC<FullCourseParticipantEditorPr
           >
             <div className="participants-list">
               {participants.map((participant, index) => (
-              <SortableParticipantItem
-                key={participant.id}
-                participant={participant}
-                index={index}
-                isOrganizer={index === organizerIndex}
-                onSetOrganizer={() => handleSetOrganizer(index)}
-                onSplit={() => handleSplitParticipant(index)}
-                mergeMode={mergeMode}
-                isSelected={mergeMode && selectedForMerge.has(participant.id)}
-                isMain={mergeMode && mergeMainId === participant.id}
-                onSelectForMerge={() => toggleSelectForMerge(index)}
-              />
-            ))}
+                <SortableParticipantItem
+                  key={participant.id}
+                  participant={participant}
+                  index={index}
+                  isOrganizer={index === organizerIndex}
+                  onSetOrganizer={() => handleSetOrganizer(index)}
+                  onSplit={() => handleSplitParticipant(index)}
+                  mergeMode={mergeMode}
+                  isSelected={mergeMode && selectedForMerge.has(participant.id)}
+                  isMain={mergeMode && mergeMainId === participant.id}
+                  onSelectForMerge={() => toggleSelectForMerge(index)}
+                />
+              ))}
             </div>
           </SortableContext>
         </DndContext>
@@ -618,6 +646,30 @@ export const FullCourseParticipantEditor: React.FC<FullCourseParticipantEditorPr
           border-color: #007bff;
         }
 
+        .sortable-participant-item.merge-mode {
+          cursor: pointer;
+        }
+
+        .sortable-participant-item.merge-mode:hover {
+          background: #e7f3ff;
+        }
+
+        .sortable-participant-item.is-selected {
+          border-color: #007bff;
+          background: #e7f3ff;
+          box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+        }
+
+        .sortable-participant-item.is-main {
+          border-color: #28a745;
+          background: #d4edda;
+        }
+
+        .drag-disabled {
+          cursor: not-allowed;
+          opacity: 0.3;
+        }
+
         .sortable-participant-item.is-organizer {
           background: #fff3cd;
           border-color: #ffc107;
@@ -654,11 +706,30 @@ export const FullCourseParticipantEditor: React.FC<FullCourseParticipantEditorPr
           color: #000;
         }
 
-        .participant-name {
+        .participant-details {
           flex: 1;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+
+        .participant-name {
           color: #212529;
           font-size: 1rem;
           font-weight: 500;
+        }
+
+        .merged-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 0.75rem;
+          color: #007bff;
+          background: #e7f3ff;
+          padding: 2px 6px;
+          border-radius: 4px;
+          margin-top: 2px;
+          width: fit-content;
         }
 
         .participant-info {

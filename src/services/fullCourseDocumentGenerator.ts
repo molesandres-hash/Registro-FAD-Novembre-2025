@@ -568,10 +568,35 @@ export class FullCourseDocumentGenerator {
     const data = templateData as any;
     // Use same placeholder names as single-day mode
     data[`nome${index}`] = participant.name;
-    data[`MattOraIn${index}`] = this.formatTime(participant.morningFirstJoin);
-    data[`MattOraOut${index}`] = this.formatTime(participant.morningLastLeave);
-    data[`PomeOraIn${index}`] = this.formatTime(participant.afternoonFirstJoin);
-    data[`PomeOraOut${index}`] = this.formatTime(participant.afternoonLastLeave);
+
+    // Format morning connections
+    const morningConnections = participant.allConnections.morning;
+    if (morningConnections.length > 0) {
+      data[`MattOraIn${index}`] = morningConnections
+        .map(c => this.formatTimeWithSeconds(c.joinTime))
+        .join(' - ');
+      data[`MattOraOut${index}`] = morningConnections
+        .map(c => this.formatTimeWithSeconds(c.leaveTime))
+        .join(' - ');
+    } else {
+      data[`MattOraIn${index}`] = '';
+      data[`MattOraOut${index}`] = '';
+    }
+
+    // Format afternoon connections
+    const afternoonConnections = participant.allConnections.afternoon;
+    if (afternoonConnections.length > 0) {
+      data[`PomeOraIn${index}`] = afternoonConnections
+        .map(c => this.formatTimeWithSeconds(c.joinTime))
+        .join(' - ');
+      data[`PomeOraOut${index}`] = afternoonConnections
+        .map(c => this.formatTimeWithSeconds(c.leaveTime))
+        .join(' - ');
+    } else {
+      data[`PomeOraIn${index}`] = '';
+      data[`PomeOraOut${index}`] = '';
+    }
+
     data[`presenza${index}`] = participant.isPresent ? '' : 'X';
   }
 
@@ -771,6 +796,17 @@ export class FullCourseDocumentGenerator {
   private formatTime(date?: Date): string {
     if (!date) return '';
     return format(date, TIME_FORMAT);
+  }
+
+  /**
+   * Formats a Date object as HH:mm:ss.
+   *
+   * @private
+   * @param date - Date to format
+   * @returns Formatted time string
+   */
+  private formatTimeWithSeconds(date: Date): string {
+    return format(date, 'HH:mm:ss');
   }
 
   // ============================================================================
