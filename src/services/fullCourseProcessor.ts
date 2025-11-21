@@ -48,34 +48,46 @@ export class FullCourseProcessor {
   /**
    * Processes a full course CSV file from start to finish.
    *
-   * Processing steps:
-   * 1. Parse CSV file
-   * 2. Detect participant aliases
-   * 3. Auto-merge high-confidence aliases
-   * 4. Update statistics
+   * This is the main entry point for full course processing. It orchestrates
+   * the entire workflow from raw CSV to fully processed course data.
    *
-   * @param csvContent - Raw CSV content as string
-   * @returns Parsed course data with merged participants
+   * Processing steps:
+   * 1. **Parse CSV**: Extract days, sessions, and participants from Zoom export
+   * 2. **Detect Aliases**: Find similar names that likely refer to same person
+   * 3. **Auto-merge**: Automatically merge high-confidence aliases (≥80% similarity)
+   * 4. **Update Statistics**: Recalculate totals after merging
+   * 5. **Validate**: Ensure we have at least one non-organizer participant
+   *
+   * @param csvContent - Raw CSV content as string (from Zoom export)
+   * @returns Parsed course data with merged participants and alias suggestions
+   * @throws Error if no participants found (empty or invalid CSV)
    *
    * @example
    * ```ts
+   * const csvContent = await file.text();
    * const parsedData = await processor.processFullCourseCSV(csvContent);
    * console.log(`Processed ${parsedData.statistics.totalDays} days`);
+   * console.log(`${parsedData.statistics.totalParticipants} unique participants`);
    * ```
    */
   async processFullCourseCSV(csvContent: string): Promise<ParsedFullCourseData> {
-    // Step 1: Parse CSV
+    // Step 1: Parse CSV file into structured data
+    // Extracts days, sessions, and builds initial participant list
     const parsedData = this.parseCSV(csvContent);
 
-    // Step 2: Detect and apply aliases
+    // Step 2: Detect potential aliases among participants
+    // Uses multi-metric similarity algorithm to find name variations
     const aliasSuggestions = this.detectAliases(parsedData);
 
-    // Step 3: Merge aliases
+    // Step 3: Apply automatic alias merging
+    // Merges participants with high confidence (≥80% similarity)
     this.mergeAliases(parsedData, aliasSuggestions);
 
-    // Step 4: Update final data
+    // Step 4: Update final statistics and metadata
+    // Recalculates totals after merging to reflect actual unique participants
     this.updateParsedData(parsedData, aliasSuggestions);
 
+    // Validate that we have at least one participant (excluding organizer)
     const hasParticipants = parsedData.allParticipants.some(p => !p.isOrganizer);
     if (!hasParticipants) {
       throw new Error('Nessun partecipante trovato nel file CSV');
