@@ -1,0 +1,5 @@
+node_modules
+
+# macOS sidecars
+._*
+.DS_Store

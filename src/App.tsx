@@ -1,0 +1,230 @@
+import React, { useState, useEffect } from 'react';
+import { TemplateGuide } from './components/TemplateGuide';
+import { UploadSection, EditSection, SuccessSection } from './components/sections';
+import { ErrorMessage, AppHeader } from './components/common';
+import { MainMenu, AppMode } from './components/MainMenu';
+import { FullCourseApp } from './components/full-course/FullCourseApp';
+import { BatchCourseMode } from './components/upload/BatchCourseMode';
+import {
+  useAppState,
+  useErrorHandler,
+  useFileProcessing,
+  useDocumentGeneration,
+  useTemplateLoader
+} from './hooks';
+import { courseStorageService } from './services/courseStorageService_simple';
+import { APP_STEPS, ERROR_MESSAGES } from './constants';
+import './App.css';
+
+
+function App() {
+  const [currentMode, setCurrentMode] = useState<AppMode | null>(null);
+  const appState = useAppState();
+  const { error, handleError, handleTemplateError, clearError } = useErrorHandler();
+  const { isProcessing, processFiles } = useFileProcessing();
+  const { isGenerating, generateDocument } = useDocumentGeneration();
+  const { templateFile, setTemplateFile } = useTemplateLoader();
+
+  // Initialize course storage service
+  useEffect(() => {
+    courseStorageService.init().catch(console.error);
+  }, []);
+
+  // Use template file from hook, but allow override from app state
+  const currentTemplateFile = appState.templateFile || templateFile;
+
+  const handleFileProcessing = async () => {
+    await processFiles(
+      appState.lessonType,
+      appState.morningFile,
+      appState.afternoonFile,
+      currentTemplateFile,
+      appState.subject,
+      ({ participants, organizer, lessonHours }) => {
+        appState.setParticipants(participants);
+        appState.setOrganizer(organizer);
+        appState.setLessonHours(lessonHours);
+        appState.setStep(APP_STEPS.EDIT);
+      },
+      (errorKey) => {
+        const message = ERROR_MESSAGES[errorKey as keyof typeof ERROR_MESSAGES] || errorKey;
+        handleError(message);
+      }
+    );
+  };
+
+  const handleGenerateDocument = async () => {
+    await generateDocument(
+      currentTemplateFile,
+      appState.subject,
+      appState.courseId,
+      appState.participants,
+      appState.organizer,
+      appState.lessonType,
+      appState.lessonHours,
+      appState.morningFile,
+      appState.afternoonFile,
+      () => appState.setStep(APP_STEPS.GENERATE),
+      (errorMessage) => {
+        if (errorMessage.includes('template') || errorMessage.includes('placeholder')) {
+          handleTemplateError(errorMessage);
+        } else {
+          handleError('DOCUMENT_GENERATION_ERROR', errorMessage);
+        }
+      }
+    );
+  };
+
+  const handleModeSelect = (mode: AppMode) => {
+    setCurrentMode(mode);
+    if (mode === 'single-day') {
+      appState.resetApp();
+    }
+  };
+
+  const handleBackToMenu = () => {
+    setCurrentMode(null);
+    appState.resetApp();
+  };
+
+  return (
+    <div className="app">
+      {currentMode === null && (
+        <>
+          <AppHeader />
+          <main className="app-main">
+            <MainMenu onModeSelect={handleModeSelect} />
+          </main>
+        </>
+      )}
+
+      {currentMode === 'single-day' && (
+        <>
+          <AppHeader />
+          <main className="app-main">
+            <div className="single-day-header">
+              <button onClick={handleBackToMenu} className="btn-back">
+                ← Torna al Menu
+              </button>
+              <h2>Modalità Giorno Singolo</h2>
+            </div>
+
+            {error && (
+              <ErrorMessage error={error} onClose={clearError} />
+            )}
+
+            {appState.step === APP_STEPS.UPLOAD && (
+              <UploadSection
+                lessonType={appState.lessonType}
+                setLessonType={appState.setLessonType}
+                morningFile={appState.morningFile}
+                setMorningFile={appState.setMorningFile}
+                afternoonFile={appState.afternoonFile}
+                setAfternoonFile={appState.setAfternoonFile}
+                templateFile={currentTemplateFile}
+                setTemplateFile={(file) => {
+                  appState.setTemplateFile(file);
+                  setTemplateFile(file);
+                }}
+                courseId={appState.courseId}
+                setCourseId={appState.setCourseId}
+                subject={appState.subject}
+                setSubject={appState.setSubject}
+                onShowTemplateGuide={() => appState.setShowTemplateGuide(true)}
+                onProcessFiles={handleFileProcessing}
+                isProcessing={isProcessing}
+              />
+            )}
+
+            {appState.step === APP_STEPS.EDIT && (
+              <EditSection
+                participants={appState.participants}
+                organizer={appState.organizer}
+                onParticipantsChange={appState.setParticipants}
+                setOrganizer={appState.setOrganizer}
+                lessonType={appState.lessonType}
+                lessonHours={appState.lessonHours}
+                morningFile={appState.morningFile}
+                afternoonFile={appState.afternoonFile}
+                subject={appState.subject}
+                courseId={appState.courseId}
+                debugMode={appState.debugMode}
+                setDebugMode={appState.setDebugMode}
+                onBack={appState.resetApp}
+                onGenerateDocument={handleGenerateDocument}
+                isGenerating={isGenerating}
+              />
+            )}
+
+            {appState.step === APP_STEPS.GENERATE && (
+              <SuccessSection 
+                onNewDocument={appState.resetApp}
+                onReturnToDashboard={() => appState.setStep(APP_STEPS.EDIT)}
+              />
+            )}
+          </main>
+          
+          <TemplateGuide 
+            isOpen={appState.showTemplateGuide} 
+            onClose={() => appState.setShowTemplateGuide(false)} 
+          />
+        </>
+      )}
+
+      {currentMode === 'batch-course' && (
+        <>
+          <AppHeader />
+          <main className="app-main">
+            <BatchCourseMode
+              templateFile={currentTemplateFile}
+              onComplete={handleBackToMenu}
+              onCancel={handleBackToMenu}
+            />
+          </main>
+        </>
+      )}
+
+      {currentMode === 'full-course' && (
+        <FullCourseApp
+          templateFile={currentTemplateFile}
+          onBackToMenu={handleBackToMenu}
+        />
+      )}
+
+      <style>{`
+        .single-day-header {
+          display: flex;
+          align-items: center;
+          gap: 20px;
+          margin-bottom: 20px;
+          padding: 20px;
+          background: white;
+          border-bottom: 1px solid #e9ecef;
+        }
+
+        .btn-back {
+          background: #6c757d;
+          color: white;
+          border: none;
+          padding: 8px 16px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 0.9rem;
+          transition: background-color 0.2s;
+        }
+
+        .btn-back:hover {
+          background: #545b62;
+        }
+
+        .single-day-header h2 {
+          margin: 0;
+          color: #212529;
+          font-size: 1.5rem;
+        }
+      `}</style>
+    </div>
+  );
+}
+
+export default App;

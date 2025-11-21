@@ -1,0 +1,377 @@
+import Papa from 'papaparse';
+import { ZoomParticipant, ProcessedParticipant, CSVAnalysis, CSVPeriod } from '../types';
+import { LESSON_HOURS } from '../constants';
+
+export const parseZoomCSV = (csvContent: string): ZoomParticipant[] => {
+  const lines = csvContent.split('\n');
+  
+  // Find the start of participant data (line with "Nome (nome originale)")
+  let participantStartIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].includes('Nome (nome originale)')) {
+      participantStartIndex = i;
+      break;
+    }
+  }
+  
+  if (participantStartIndex === -1) {
+    throw new Error('Formato CSV non valido: impossibile trovare la sezione partecipanti');
+  }
+  
+  // Extract participant data
+  const participantData = lines.slice(participantStartIndex).join('\n');
+  
+  const result = Papa.parse(participantData, {
+    header: true,
+    skipEmptyLines: true,
+  });
+  
+  if (result.errors.length > 0) {
+    console.warn('Errori durante il parsing CSV:', result.errors);
+  }
+  
+  const participants = result.data.map((row: any, index: number) => ({
+    name: cleanParticipantName(row['Nome (nome originale)'] || ''),
+    email: row['E-mail'] || '',
+    joinTime: parseZoomDateTime(row['Ora di ingresso']),
+    leaveTime: parseZoomDateTime(row['Ora di uscita']),
+    duration: parseInt(row['Durata (minuti)']) || 0,
+    isGuest: row['Guest'] === 'Sì',
+    isOrganizer: index === 0, // First participant is the organizer
+  })).filter(p => p.name && p.joinTime && p.leaveTime);
+  
+  return participants;
+};
+
+const cleanParticipantName = (name: string): string => {
+  // Remove organizer info in parentheses
+  return name.replace(/\s*\([^)]*\)$/, '').trim();
+};
+
+const parseZoomDateTime = (dateTimeStr: string): Date => {
+  // Expected formats like: "08/07/2025 09:02:37 AM" (Italian export)
+  // Handle both DD/MM/YYYY and MM/DD/YYYY gracefully, defaulting to DD/MM/YYYY
+  if (!dateTimeStr) return new Date();
+
+  try {
+    const cleaned = dateTimeStr.replace(/"/g, '').trim();
+    const parts = cleaned.split(/\s+/);
+    const datePart = parts[0];
+    const timePart = parts[1] || '00:00:00';
+    const ampm = (parts[2] || '').toUpperCase();
+
+    const [p1, p2, p3] = datePart.split('/').map((v) => parseInt(v, 10));
+    let day = p1;
+    let month = p2;
+    const year = p3;
+
+    // Auto-detect format:
+    // - If first token > 12 -> it must be DD/MM/YYYY (Italian)
+    // - If second token > 12 -> it's MM/DD/YYYY and needs swap
+    // - If both <= 12 -> default to DD/MM/YYYY (Italian context)
+    if (day > 12 && month <= 12) {
+      // Already DD/MM
+    } else if (month > 12 && day <= 12) {
+      // Was MM/DD -> swap to DD/MM
+      const tmp = day; day = month; month = tmp;
+    } else {
+      // Ambiguous (both <= 12). Prefer DD/MM for Italian CSVs
+      // No change needed
+    }
+
+    const [hhStr = '0', mmStr = '0', ssStr = '0'] = timePart.split(':');
+    let hour24 = parseInt(hhStr, 10);
+    const minute = parseInt(mmStr, 10) || 0;
+    const second = parseInt(ssStr, 10) || 0;
+
+    if (ampm === 'PM' && hour24 !== 12) hour24 += 12;
+    else if (ampm === 'AM' && hour24 === 12) hour24 = 0;
+
+    // Construct local date (no timezone conversion)
+    return new Date(year, (month || 1) - 1, day || 1, hour24 || 0, minute, second);
+  } catch (error) {
+    console.error('Errore parsing data:', dateTimeStr, error);
+    return new Date();
+  }
+};
+
+export const processParticipants = (
+  morningParticipants: ZoomParticipant[],
+  afternoonParticipants: ZoomParticipant[]
+): { participants: ProcessedParticipant[], organizer: ProcessedParticipant | null } => {
+  const participantMap = new Map<string, ProcessedParticipant>();
+  let organizer: ProcessedParticipant | null = null;
+  
+  // Helper function to create participant entry
+  const createParticipant = (participant: ZoomParticipant): ProcessedParticipant => ({
+    name: participant.name,
+    email: participant.email,
+    totalAbsenceMinutes: 0,
+    isPresent: false,
+    isOrganizer: participant.isOrganizer,
+    allConnections: {
+      morning: [],
+      afternoon: []
+    },
+    sessions: {
+      morning: [],
+      afternoon: []
+    }
+  });
+  
+  // Process morning participants
+  morningParticipants.forEach(participant => {
+    const key = participant.name.toLowerCase();
+    if (!participantMap.has(key)) {
+      participantMap.set(key, createParticipant(participant));
+    }
+    const processedParticipant = participantMap.get(key)!;
+    processedParticipant.sessions.morning.push(participant);
+    processedParticipant.allConnections.morning.push({
+      joinTime: participant.joinTime,
+      leaveTime: participant.leaveTime
+    });
+    
+    // Set organizer (first participant found)
+    if (participant.isOrganizer && !organizer) {
+      organizer = processedParticipant;
+    }
+  });
+  
+  // Process afternoon participants
+  afternoonParticipants.forEach(participant => {
+    const key = participant.name.toLowerCase();
+    if (!participantMap.has(key)) {
+      participantMap.set(key, createParticipant(participant));
+    }
+    const processedParticipant = participantMap.get(key)!;
+    processedParticipant.sessions.afternoon.push(participant);
+    processedParticipant.allConnections.afternoon.push({
+      joinTime: participant.joinTime,
+      leaveTime: participant.leaveTime
+    });
+    
+    // Set organizer (first participant found)
+    if (participant.isOrganizer && !organizer) {
+      organizer = processedParticipant;
+    }
+  });
+  
+  // Calculate attendance for each participant
+  const processed = Array.from(participantMap.values()).map(participant => {
+    return calculateAttendance(participant);
+  });
+  
+  // Filter out organizer from participants list
+  const participants = processed.filter(p => !p.isOrganizer).sort((a, b) => a.name.localeCompare(b.name));
+  
+  return { participants, organizer };
+};
+
+const calculateAttendance = (participant: ProcessedParticipant): ProcessedParticipant => {
+  const morning = participant.sessions.morning;
+  const afternoon = participant.sessions.afternoon;
+  
+  // Calculate morning session times
+  if (morning.length > 0) {
+    morning.sort((a, b) => a.joinTime.getTime() - b.joinTime.getTime());
+    participant.morningFirstJoin = morning[0].joinTime;
+    participant.morningLastLeave = morning[morning.length - 1].leaveTime;
+  }
+  
+  // Calculate afternoon session times
+  if (afternoon.length > 0) {
+    afternoon.sort((a, b) => a.joinTime.getTime() - b.joinTime.getTime());
+    participant.afternoonFirstJoin = afternoon[0].joinTime;
+    participant.afternoonLastLeave = afternoon[afternoon.length - 1].leaveTime;
+  }
+  
+  // Calculate total absence minutes
+  let totalAbsence = 0;
+  
+  // Morning session absences
+  if (morning.length > 0) {
+    totalAbsence += calculateSessionAbsences(morning, LESSON_HOURS.MORNING.START, LESSON_HOURS.MORNING.END);
+  } else if (afternoon.length > 0) {
+    // If only afternoon, don't count morning as absence
+    totalAbsence += 0;
+  } else {
+    // Not present in any session
+    totalAbsence = 999; // Mark as definitely absent
+  }
+  
+  // Afternoon session absences
+  if (afternoon.length > 0) {
+    totalAbsence += calculateSessionAbsences(afternoon, LESSON_HOURS.AFTERNOON.START, LESSON_HOURS.AFTERNOON.END);
+  } else if (morning.length > 0) {
+    // If only morning, don't count afternoon as absence
+    totalAbsence += 0;
+  }
+  
+  participant.totalAbsenceMinutes = totalAbsence;
+  participant.isPresent = totalAbsence <= 14;
+  
+  return participant;
+};
+
+const calculateSessionAbsences = (
+  sessions: ZoomParticipant[],
+  startHour: number,
+  endHour: number
+): number => {
+  if (sessions.length === 0) return 0;
+  
+  // Sort sessions by join time
+  const sortedSessions = [...sessions].sort((a, b) => a.joinTime.getTime() - b.joinTime.getTime());
+  
+  let totalAbsence = 0;
+
+  // Calculate absence before first join and after last leave relative to lesson hours
+  const first = sortedSessions[0];
+  const last = sortedSessions[sortedSessions.length - 1];
+
+  const sessionDate = new Date(first.joinTime);
+  const scheduledStart = new Date(sessionDate);
+  scheduledStart.setHours(startHour, 0, 0, 0);
+
+  const scheduledEnd = new Date(sessionDate);
+  scheduledEnd.setHours(endHour, 0, 0, 0);
+
+  if (first.joinTime.getTime() > scheduledStart.getTime()) {
+    totalAbsence += Math.max(0, (first.joinTime.getTime() - scheduledStart.getTime()) / (1000 * 60));
+  }
+
+  if (last.leaveTime.getTime() < scheduledEnd.getTime()) {
+    totalAbsence += Math.max(0, (scheduledEnd.getTime() - last.leaveTime.getTime()) / (1000 * 60));
+  }
+  
+  for (let i = 0; i < sortedSessions.length - 1; i++) {
+    const currentLeave = sortedSessions[i].leaveTime;
+    const nextJoin = sortedSessions[i + 1].joinTime;
+    
+    const gapMinutes = (nextJoin.getTime() - currentLeave.getTime()) / (1000 * 60);
+    
+    // Only count gaps longer than 90 seconds as absences
+    if (gapMinutes > 1.5) {
+      totalAbsence += gapMinutes;
+    }
+  }
+  
+  return Math.round(totalAbsence);
+};
+
+/**
+ * Analyzes a CSV file to determine if it contains morning or afternoon session data
+ * Uses 13:00 (1 PM) as the discriminant: before 13:00 = morning, after = afternoon
+ */
+export const analyzeCSVPeriod = (csvContent: string): CSVAnalysis => {
+  try {
+    const participants = parseZoomCSV(csvContent);
+    
+    if (participants.length === 0) {
+      throw new Error('Nessun partecipante trovato nel file CSV');
+    }
+
+    // Find the earliest join time and latest leave time
+    const joinTimes = participants.map(p => p.joinTime).filter(Boolean);
+    const leaveTimes = participants.map(p => p.leaveTime).filter(Boolean);
+    
+    if (joinTimes.length === 0) {
+      throw new Error('Nessun orario di ingresso valido trovato');
+    }
+
+    const firstJoinTime = new Date(Math.min(...joinTimes.map(d => d.getTime())));
+    const lastLeaveTime = new Date(Math.max(...leaveTimes.map(d => d.getTime())));
+    
+    // Determine period based on first join time
+    // If first person joins before 13:00 (1 PM), it's morning; otherwise afternoon
+    const firstJoinHour = firstJoinTime.getHours();
+    const period: CSVPeriod = firstJoinHour < 13 ? 'morning' : 'afternoon';
+    
+    return {
+      period,
+      firstJoinTime,
+      lastLeaveTime,
+      participantCount: participants.length
+    };
+  } catch (error) {
+    console.error('Errore nell\'analisi del CSV:', error);
+    return {
+      period: 'unknown',
+      firstJoinTime: new Date(),
+      lastLeaveTime: new Date(),
+      participantCount: 0
+    };
+  }
+};
+
+/**
+ * Analyzes multiple CSV files and automatically assigns them to morning/afternoon
+ * Returns an object with the files correctly assigned
+ */
+export const autoAssignCSVFiles = (files: File[]): Promise<{
+  morningFile: File | null;
+  afternoonFile: File | null;
+  analyses: Array<{ file: File; analysis: CSVAnalysis }>;
+  errors: string[];
+}> => {
+  return new Promise((resolve) => {
+    const analyses: Array<{ file: File; analysis: CSVAnalysis }> = [];
+    const errors: string[] = [];
+    let completed = 0;
+    
+    if (files.length === 0) {
+      resolve({ morningFile: null, afternoonFile: null, analyses: [], errors: ['Nessun file fornito'] });
+      return;
+    }
+    
+    files.forEach((file, index) => {
+      const reader = new FileReader();
+      
+      reader.onload = (e) => {
+        try {
+          const csvContent = e.target?.result as string;
+          const analysis = analyzeCSVPeriod(csvContent);
+          analyses.push({ file, analysis });
+        } catch (error) {
+          errors.push(`Errore nell'analisi del file ${file.name}: ${error}`);
+          analyses.push({ 
+            file, 
+            analysis: { period: 'unknown', firstJoinTime: new Date(), lastLeaveTime: new Date(), participantCount: 0 }
+          });
+        }
+        
+        completed++;
+        if (completed === files.length) {
+          // Auto-assign files based on analysis
+          const morningFiles = analyses.filter(a => a.analysis.period === 'morning');
+          const afternoonFiles = analyses.filter(a => a.analysis.period === 'afternoon');
+          
+          // Take the first valid file for each period
+          const morningFile = morningFiles.length > 0 ? morningFiles[0].file : null;
+          const afternoonFile = afternoonFiles.length > 0 ? afternoonFiles[0].file : null;
+          
+          // Add warnings for multiple files of the same period
+          if (morningFiles.length > 1) {
+            errors.push(`Trovati ${morningFiles.length} file della mattina. Utilizzato: ${morningFile?.name}`);
+          }
+          if (afternoonFiles.length > 1) {
+            errors.push(`Trovati ${afternoonFiles.length} file del pomeriggio. Utilizzato: ${afternoonFile?.name}`);
+          }
+          
+          resolve({ morningFile, afternoonFile, analyses, errors });
+        }
+      };
+      
+      reader.onerror = () => {
+        errors.push(`Errore nella lettura del file ${file.name}`);
+        completed++;
+        if (completed === files.length) {
+          resolve({ morningFile: null, afternoonFile: null, analyses, errors });
+        }
+      };
+      
+      reader.readAsText(file);
+    });
+  });
+};
