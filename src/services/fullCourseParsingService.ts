@@ -11,14 +11,8 @@ import {
 // CONSTANTS
 // ============================================================================
 
-/** Date format for day keys and file naming (ISO format) */
-const DATE_FORMAT_ISO = 'YYYY-MM-DD';
-
 /** Default course name when not specified in CSV */
 const DEFAULT_COURSE_NAME = 'Corso senza nome';
-
-/** Hour threshold for morning/afternoon split (24-hour format) */
-const AFTERNOON_START_HOUR = 13;
 
 /** Master order value for organizer (always first) */
 const ORGANIZER_ORDER = 0;

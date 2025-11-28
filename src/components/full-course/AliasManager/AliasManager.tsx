@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ParsedFullCourseData, FullCourseParticipantInfo, AliasSuggestion } from '../../../types/course';
+import { ParsedFullCourseData, AliasSuggestion } from '../../../types/course';
 import { aliasManagementService } from '../../../services/aliasManagementService';
 import { FiUsers, FiAlertCircle, FiCheckCircle, FiX, FiCheck, FiArrowLeft, FiArrowRight, FiHelpCircle } from 'react-icons/fi';
 
@@ -11,11 +11,6 @@ interface AliasManagerProps {
 
 type Step = 'intro' | 'auto-review' | 'manual-merge' | 'confirmation';
 
-interface MergeDecision {
-  suggestionIndex: number;
-  accepted: boolean;
-}
-
 export const AliasManager: React.FC<AliasManagerProps> = ({
   parsedData,
   onComplete,
@@ -24,12 +19,10 @@ export const AliasManager: React.FC<AliasManagerProps> = ({
   const [currentStep, setCurrentStep] = useState<Step>('intro');
   const [currentReviewIndex, setCurrentReviewIndex] = useState(0);
   const [mergeDecisions, setMergeDecisions] = useState<Map<number, boolean>>(new Map());
-  const [customMerges, setCustomMerges] = useState<Map<string, string[]>>(new Map());
   const [manualSelected, setManualSelected] = useState<Set<number>>(new Set());
   const [manualMain, setManualMain] = useState<string>('');
   const [manualAlias, setManualAlias] = useState<string>('');
   const [customSuggestions, setCustomSuggestions] = useState<AliasSuggestion[]>([]);
-  const [showHelp, setShowHelp] = useState(false);
 
   // Extract data from parsedData
   const participants = parsedData.allParticipants;

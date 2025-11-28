@@ -108,11 +108,6 @@ export const FullCourseApp: React.FC<FullCourseAppProps> = ({ templateFile, onBa
     setGenerateError('');
   };
 
-  const openAliasManager = () => {
-    if (!parsedCSVData) return;
-    setCurrentStep('alias-management');
-  };
-
   const openAddAbsentModal = () => {
     setShowAddAbsentModal(true);
     setAbsentName('');
