@@ -285,6 +285,13 @@ export class AliasManagementService {
   /**
    * Merges a single alias suggestion into the participant map.
    *
+   * IMPORTANT MERGE LOGIC:
+   * - If the suggestion is autoMerged (at least one alias has confidence >= 0.80),
+   *   then ALL aliases in the suggestion are merged, regardless of individual similarity.
+   * - This ensures robust merging when a participant uses multiple devices/name variations.
+   * - Example: "Giorgio Santambrogio", "giorgio s." (0.85), "G. S." (0.70)
+   *   → All three get merged because the highest confidence (0.85) triggers autoMerged.
+   *
    * @private
    * @param participantMap - Map to merge into
    * @param suggestion - Alias suggestion to merge
@@ -305,7 +312,15 @@ export class AliasManagementService {
     for (let i = 0; i < suggestion.suggestedAliases.length; i++) {
       const aliasName = suggestion.suggestedAliases[i];
       const similarity = suggestion.similarityScores[i];
-      if (similarity < HIGH_CONFIDENCE_THRESHOLD && !force) continue;
+
+      // Merge this alias if:
+      // 1. Force mode is enabled (manual merge)
+      // 2. The suggestion is autoMerged (at least one alias has high confidence)
+      //    → This ensures ALL aliases in the group are merged together
+      // 3. This specific alias has high confidence individually
+      if (!force && !suggestion.autoMerged && similarity < HIGH_CONFIDENCE_THRESHOLD) {
+        continue;
+      }
 
       this.mergeAliasIntoMain(
         participantMap,

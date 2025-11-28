@@ -416,4 +416,88 @@ describe('AliasManagementService', () => {
       expect(suggestions[0].confidence).toBeGreaterThan(0.6);
     });
   });
+
+  describe('Multiple Devices / Robust Merging', () => {
+    it('should merge ALL aliases when at least one has high confidence', () => {
+      // Scenario: Same participant with 3 name variations (e.g., multiple devices)
+      // - Main name: "Giorgio Santambrogio"
+      // - Alias 1: "giorgio s." (high similarity ~0.85)
+      // - Alias 2: "G. S." (medium similarity ~0.70)
+      // Expected: ALL three should be merged because Alias 1 triggers autoMerged
+      const participants = [
+        createParticipant('1', 'Giorgio Santambrogio', 'giorgio@test.it', false, ['2025-09-19']),
+        createParticipant('2', 'giorgio s.', 'giorgio@test.it', false, ['2025-09-20']),
+        createParticipant('3', 'G. S.', '', false, ['2025-09-21']),
+      ];
+
+      const suggestions = aliasManagementService.detectAliases(participants);
+      const { mergedParticipants } = aliasManagementService.applyAliasMappings(
+        participants,
+        suggestions
+      );
+
+      // Should merge into 1 participant (not 2 or 3)
+      expect(mergedParticipants.length).toBe(1);
+
+      const merged = mergedParticipants[0];
+
+      // All three names should be in aliases
+      expect(merged.aliases).toContain('Giorgio Santambrogio');
+      expect(merged.aliases).toContain('giorgio s.');
+      expect(merged.aliases).toContain('G. S.');
+      expect(merged.aliases.length).toBe(3);
+
+      // All days should be merged (no duplicates)
+      expect(merged.daysPresent).toContain('2025-09-19');
+      expect(merged.daysPresent).toContain('2025-09-20');
+      expect(merged.daysPresent).toContain('2025-09-21');
+      expect(merged.daysPresent.length).toBe(3);
+    });
+
+    it('should handle overlapping days from multiple devices', () => {
+      // Scenario: Same participant connected with 2 devices on the same day
+      const participants = [
+        createParticipant('1', 'Mario Rossi', 'mario@test.it', false, ['2025-09-19', '2025-09-20']),
+        createParticipant('2', 'mario rossi', 'mario@test.it', false, ['2025-09-19', '2025-09-21']),
+      ];
+
+      const suggestions = aliasManagementService.detectAliases(participants);
+      const { mergedParticipants } = aliasManagementService.applyAliasMappings(
+        participants,
+        suggestions
+      );
+
+      expect(mergedParticipants.length).toBe(1);
+
+      const merged = mergedParticipants[0];
+
+      // Should deduplicate overlapping days
+      expect(merged.daysPresent).toContain('2025-09-19'); // Present in both
+      expect(merged.daysPresent).toContain('2025-09-20');
+      expect(merged.daysPresent).toContain('2025-09-21');
+      expect(merged.daysPresent.length).toBe(3); // Not 4 (deduped)
+    });
+
+    it('should preserve order: higher confidence alias becomes primary', () => {
+      // The first participant found should become primary
+      const participants = [
+        createParticipant('1', 'G. S.', '', false, ['2025-09-21']),
+        createParticipant('2', 'Giorgio Santambrogio', 'giorgio@test.it', false, ['2025-09-19']),
+        createParticipant('3', 'giorgio s.', 'giorgio@test.it', false, ['2025-09-20']),
+      ];
+
+      const suggestions = aliasManagementService.detectAliases(participants);
+      const { mergedParticipants } = aliasManagementService.applyAliasMappings(
+        participants,
+        suggestions
+      );
+
+      expect(mergedParticipants.length).toBe(1);
+
+      // Primary name should be from first participant found (based on iteration order)
+      const merged = mergedParticipants[0];
+      expect(merged.primaryName).toBe('G. S.');
+      expect(merged.aliases.length).toBe(3);
+    });
+  });
 });
