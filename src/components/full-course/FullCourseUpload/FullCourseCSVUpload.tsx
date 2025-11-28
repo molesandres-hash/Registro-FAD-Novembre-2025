@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { ParsedFullCourseData } from '../../../types/course';
 import { fullCourseProcessor } from '../../../services/fullCourseProcessor';
 import { FiUpload, FiCheckCircle, FiAlertCircle, FiLoader, FiUsers, FiCalendar } from 'react-icons/fi';
@@ -56,7 +56,7 @@ export const FullCourseCSVUpload: React.FC<FullCourseCSVUploadProps> = ({
       setError(err instanceof Error ? err.message : 'Errore sconosciuto');
       setStatus('error');
     }
-  }, []);
+  }, [autoProceed, onParsed]);
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

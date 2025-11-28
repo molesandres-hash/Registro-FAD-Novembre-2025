@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiCalendar, FiUsers, FiDownload, FiLoader } from 'react-icons/fi';
 import { batchCSVProcessor } from '../../services/batchCSVProcessor';
 import { BatchCSVFile, DayCSVPair, CompleteBatchResult } from '../../types/course';

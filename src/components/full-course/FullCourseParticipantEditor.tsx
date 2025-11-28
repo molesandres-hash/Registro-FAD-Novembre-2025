@@ -133,7 +133,7 @@ export const FullCourseParticipantEditor: React.FC<FullCourseParticipantEditorPr
       setAliasSuggestions(suggestions);
       setShowAliasPanel(true);
     }
-  }, []); // Run once on mount
+  }, [participants]); // Run when participants change
 
   const [newAbsentName, setNewAbsentName] = useState('');
   const [newAbsentEmail, setNewAbsentEmail] = useState('');
