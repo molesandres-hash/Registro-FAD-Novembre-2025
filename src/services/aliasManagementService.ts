@@ -563,11 +563,13 @@ export class AliasManagementService {
    * Normalizes a name for comparison.
    *
    * Normalization steps:
-   * 1. Convert to lowercase
-   * 2. Decompose accented characters (NFD normalization)
-   * 3. Remove diacritics (é → e, à → a, etc.)
-   * 4. Remove special characters
-   * 5. Trim whitespace
+   * 1. Decompose accented characters (NFD normalization)
+   * 2. Remove diacritics (é → e, à → a, etc.)
+   * 3. Remove special characters
+   * 4. Trim whitespace
+   *
+   * Note: Case is PRESERVED to treat "MASSIMILIANO", "Massimiliano",
+   * and "massimiliano" as different names. Users can manually merge if needed.
    *
    * @private
    * @param name - Name to normalize
@@ -576,12 +578,11 @@ export class AliasManagementService {
    * @example
    * ```ts
    * const normalized = this.normalizeName("José María");
-   * // Returns: "jose maria"
+   * // Returns: "Jose Maria" (preserves case)
    * ```
    */
   private normalizeName(name: string): string {
     return name
-      .toLowerCase()
       .normalize('NFD') // Decompose accented characters
       .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
       .replace(/[^\w\s]/g, '') // Remove special characters
