@@ -369,9 +369,14 @@ export class FullCourseDocumentGenerator {
     const mergedParticipants = this.sortByMasterOrder([...participants, ...fixedAbsents], parsedData)
       .slice(0, MAX_PARTICIPANTS_IN_TEMPLATE);
 
+    // STEP 7: Determine subject for this day
+    // Use custom topic if available, otherwise fall back to course name from CSV
+    const dayIndex = parsedData.days.findIndex(d => d.date === day.date);
+    const subject = parsedData.customTopics?.[dayIndex] || day.courseName;
+
     return {
       date: new Date(day.date),
-      subject: day.courseName,
+      subject,
       courseId: parsedData.zoomMeetingId,
       participants: mergedParticipants,
       organizer: organizer || undefined,

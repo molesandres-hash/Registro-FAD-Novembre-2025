@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { FullCourseCSVUpload } from './FullCourseUpload/FullCourseCSVUpload';
 import { AliasManager } from './AliasManager/AliasManager';
 import { FullCourseParticipantEditor } from './FullCourseParticipantEditor';
+import { TopicListInput } from './TopicListInput';
 import { ParsedFullCourseData, BatchDocumentResult } from '../../types/course';
 import { fullCourseDocumentGenerator } from '../../services/fullCourseDocumentGenerator';
 import { FiArrowLeft, FiLoader, FiCheckCircle, FiAlertCircle, FiDownload } from 'react-icons/fi';
@@ -11,7 +12,7 @@ interface FullCourseAppProps {
   onBackToMenu: () => void;
 }
 
-type CourseAppStep = 'csv-upload' | 'alias-management' | 'participant-editor' | 'document-generation';
+type CourseAppStep = 'csv-upload' | 'alias-management' | 'participant-editor' | 'topic-list' | 'document-generation';
 
 export const FullCourseApp: React.FC<FullCourseAppProps> = ({ templateFile, onBackToMenu }) => {
   const [currentStep, setCurrentStep] = useState<CourseAppStep>('csv-upload');
@@ -88,7 +89,21 @@ export const FullCourseApp: React.FC<FullCourseAppProps> = ({ templateFile, onBa
 
   const handleParticipantEditorComplete = (updatedData: ParsedFullCourseData) => {
     setParsedCSVData(updatedData);
+    setCurrentStep('topic-list');
+  };
+
+  const handleTopicListComplete = (topics: string[]) => {
+    if (!parsedCSVData) return;
+    const updatedData: ParsedFullCourseData = {
+      ...parsedCSVData,
+      customTopics: topics.length > 0 ? topics : undefined,
+    };
+    setParsedCSVData(updatedData);
     setCurrentStep('document-generation');
+  };
+
+  const handleTopicListBack = () => {
+    setCurrentStep('participant-editor');
   };
 
   const handleParticipantEditorBack = () => {
@@ -191,6 +206,15 @@ export const FullCourseApp: React.FC<FullCourseAppProps> = ({ templateFile, onBa
           parsedData={parsedCSVData}
           onComplete={handleParticipantEditorComplete}
           onBack={handleParticipantEditorBack}
+        />
+      )}
+
+      {currentStep === 'topic-list' && parsedCSVData && (
+        <TopicListInput
+          totalDays={parsedCSVData.days.length}
+          dates={parsedCSVData.days.map(day => day.date)}
+          onComplete={handleTopicListComplete}
+          onBack={handleTopicListBack}
         />
       )}
 
