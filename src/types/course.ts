@@ -403,6 +403,7 @@ export interface ParsedFullCourseData {
     totalParticipants: number;
     totalSessions: number;
   };
+  customTopics?: string[]; // Optional custom topics for each day (one per day, in order)
 }
 
 /**
